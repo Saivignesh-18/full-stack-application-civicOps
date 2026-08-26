@@ -1,0 +1,34 @@
+{
+  "name": "civicops-worker",
+  "version": "1.0.0",
+  "description": "CivicOps Background Worker Service",
+  "main": "dist/worker.js",
+  "scripts": {
+    "dev": "tsx watch src/worker.ts",
+    "build": "tsc",
+    "start": "node dist/worker.js",
+    "lint": "eslint src --ext .ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.10.2",
+    "bullmq": "^5.4.2",
+    "ioredis": "^5.3.2",
+    "nodemailer": "^6.9.12",
+    "winston": "^3.12.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.24",
+    "@types/nodemailer": "^6.4.14",
+    "@typescript-eslint/eslint-plugin": "^7.1.0",
+    "@typescript-eslint/parser": "^7.1.0",
+    "eslint": "^8.57.0",
+    "prisma": "^5.10.2",
+    "tsx": "^4.7.1",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

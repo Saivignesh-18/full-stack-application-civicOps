@@ -1,0 +1,31 @@
+# CivicOps Docker Compose - Development Override
+# Run: docker compose -f compose.yaml -f compose.dev.yaml up -d
+
+services:
+  # Only run infrastructure services in dev
+  # Backend, worker, and frontend run locally for hot reload
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  # Disable application services in dev mode
+  backend:
+    profiles:
+      - full
+
+  worker:
+    profiles:
+      - full
+
+  frontend:
+    profiles:
+      - full
+
+  chatbot:
+    profiles:
+      - full

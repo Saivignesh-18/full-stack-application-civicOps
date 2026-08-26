@@ -1,0 +1,1020 @@
+// CivicOps - Multi-Tenant Municipal Operations Platform
+// Prisma Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum Role {
+  SUPER_ADMIN
+  MUNICIPAL_ADMIN
+  COMMISSIONER
+  ZONAL_OFFICER
+  DEPARTMENT_OFFICER
+  FIELD_OFFICER
+  EMPLOYEE
+  CONTRACTOR
+  CITIZEN
+}
+
+enum TenantStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum ComplaintStatus {
+  CREATED
+  ASSIGNED
+  IN_PROGRESS
+  INSPECTION
+  RESOLVED
+  CITIZEN_VERIFICATION
+  CLOSED
+  REOPENED
+  REJECTED
+}
+
+enum ComplaintPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum PropertyStatus {
+  ACTIVE
+  INACTIVE
+  DISPUTED
+}
+
+enum PropertyType {
+  RESIDENTIAL
+  COMMERCIAL
+  INDUSTRIAL
+  AGRICULTURAL
+  MIXED_USE
+}
+
+enum LicenseStatus {
+  DRAFT
+  SUBMITTED
+  DOCUMENT_REVIEW
+  INSPECTION
+  APPROVED
+  REJECTED
+  PAYMENT_PENDING
+  ISSUED
+  EXPIRED
+  CANCELLED
+}
+
+enum BuildingApplicationStatus {
+  DRAFT
+  SUBMITTED
+  DOCUMENT_VERIFICATION
+  INSPECTION
+  OFFICER_REVIEW
+  SENIOR_REVIEW
+  APPROVED
+  REJECTED
+  PAYMENT_PENDING
+  PERMIT_ISSUED
+  EXPIRED
+}
+
+enum ProjectStatus {
+  PROPOSED
+  APPROVED
+  TENDERED
+  ASSIGNED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum ContractorStatus {
+  ACTIVE
+  INACTIVE
+  BLACKLISTED
+  SUSPENDED
+}
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  TERMINATED
+  EXPIRED
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+enum NotificationType {
+  COMPLAINT_UPDATE
+  LICENSE_STATUS
+  PROJECT_UPDATE
+  PAYMENT_DUE
+  PAYMENT_RECEIVED
+  GENERAL
+  SYSTEM
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  RETRYING
+}
+
+// ============================================
+// TENANT & USER MANAGEMENT
+// ============================================
+
+model Tenant {
+  id          String       @id @default(cuid())
+  name        String
+  code        String       @unique // e.g., "GHMC", "MCH"
+  description String?
+  logo        String?
+  address     String?
+  contactEmail String?
+  contactPhone String?
+  website     String?
+  status      TenantStatus @default(ACTIVE)
+  settings    Json?        // Tenant-specific settings
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relations
+  users              User[]
+  memberships        Membership[]
+  zones              Zone[]
+  circles            Circle[]
+  wards              Ward[]
+  departments        Department[]
+  employees          Employee[]
+  citizens           Citizen[]
+  complaints         Complaint[]
+  properties         Property[]
+  tradeLicenses      TradeLicense[]
+  buildingApplications BuildingApplication[]
+  projects           Project[]
+  contractors        Contractor[]
+  contracts          Contract[]
+  budgets            Budget[]
+  transactions       Transaction[]
+  documents          Document[]
+  notifications      Notification[]
+  webhookEndpoints   WebhookEndpoint[]
+  auditLogs          AuditLog[]
+
+  @@index([code])
+  @@index([status])
+}
+
+model User {
+  id            String     @id @default(cuid())
+  email         String     @unique
+  passwordHash  String
+  name          String
+  phone         String?
+  avatar        String?
+  role          Role       @default(CITIZEN)
+  status        UserStatus @default(PENDING_VERIFICATION)
+  emailVerified Boolean    @default(false)
+  lastLoginAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  // Email verification
+  verificationToken  String?
+  verificationExpiry DateTime?
+
+  // Password reset
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+
+  // Default tenant (for quick access)
+  tenantId      String?
+  tenant        Tenant?    @relation(fields: [tenantId], references: [id])
+
+  // Relations
+  memberships       Membership[]
+  sessions          Session[]
+  employee          Employee?
+  citizen           Citizen?
+  auditLogs         AuditLog[]
+  complaintsCreated Complaint[]        @relation("ComplaintCreatedBy")
+  complaintsAssigned Complaint[]       @relation("ComplaintAssignedTo")
+  complaintEvents   ComplaintEvent[]
+  documentsUploaded Document[]
+  notifications     Notification[]
+  webhookEndpoints  WebhookEndpoint[]
+
+  @@index([email])
+  @@index([tenantId])
+  @@index([role])
+  @@index([status])
+}
+
+model Membership {
+  id        String   @id @default(cuid())
+  userId    String
+  tenantId  String
+  role      Role
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tenantId])
+  @@index([userId])
+  @@index([tenantId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  refreshToken String   @unique
+  userAgent    String?
+  ipAddress    String?
+  deviceInfo   Json?    // { browser, os, device }
+  isValid      Boolean  @default(true)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshToken])
+  @@index([expiresAt])
+}
+
+// ============================================
+// MUNICIPAL HIERARCHY
+// ============================================
+
+model Zone {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  code      String
+  description String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  circles   Circle[]
+  wards     Ward[]
+  employees Employee[]
+  complaints Complaint[]
+  properties Property[]
+  projects  Project[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+model Circle {
+  id        String   @id @default(cuid())
+  tenantId  String
+  zoneId    String
+  name      String
+  code      String
+  description String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  zone      Zone       @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  wards     Ward[]
+  employees Employee[]
+  complaints Complaint[]
+  properties Property[]
+  projects  Project[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([zoneId])
+}
+
+model Ward {
+  id         String   @id @default(cuid())
+  tenantId   String
+  zoneId     String
+  circleId   String
+  name       String
+  code       String
+  population Int?
+  area       Float?   // in sq km
+  description String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  zone       Zone        @relation(fields: [zoneId], references: [id], onDelete: Cascade)
+  circle     Circle      @relation(fields: [circleId], references: [id], onDelete: Cascade)
+  employees  Employee[]
+  citizens   Citizen[]
+  complaints Complaint[]
+  properties Property[]
+  tradeLicenses TradeLicense[]
+  projects   Project[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([zoneId])
+  @@index([circleId])
+}
+
+model Department {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  code        String
+  description String?
+  headId      String?  // Employee ID of department head
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employees  Employee[]
+  complaints Complaint[]
+  projects   Project[]
+  budgets    Budget[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+}
+
+// ============================================
+// EMPLOYEE & CITIZEN MANAGEMENT
+// ============================================
+
+model Employee {
+  id           String         @id @default(cuid())
+  tenantId     String
+  userId       String         @unique
+  employeeCode String
+  name         String
+  email        String
+  phone        String?
+  designation  String
+  departmentId String
+  zoneId       String?
+  circleId     String?
+  wardId       String?
+  status       EmployeeStatus @default(ACTIVE)
+  joiningDate  DateTime
+  terminationDate DateTime?
+  createdBy    String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id])
+  zone       Zone?      @relation(fields: [zoneId], references: [id])
+  circle     Circle?    @relation(fields: [circleId], references: [id])
+  ward       Ward?      @relation(fields: [wardId], references: [id])
+
+  @@unique([tenantId, employeeCode])
+  @@index([tenantId])
+  @@index([departmentId])
+  @@index([status])
+}
+
+model Citizen {
+  id        String   @id @default(cuid())
+  tenantId  String
+  userId    String   @unique
+  name      String
+  email     String
+  phone     String?
+  address   String?
+  aadharNumber String? // Encrypted
+  wardId    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant      Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ward        Ward?          @relation(fields: [wardId], references: [id])
+  complaints  Complaint[]
+  properties  Property[]
+  tradeLicenses TradeLicense[]
+  buildingApplications BuildingApplication[]
+
+  @@index([tenantId])
+  @@index([wardId])
+}
+
+// ============================================
+// GRIEVANCE MANAGEMENT
+// ============================================
+
+model Complaint {
+  id              String            @id @default(cuid())
+  tenantId        String
+  complaintNumber String            // Auto-generated: GRV-2024-XXXX
+  citizenId       String
+  category        String
+  subCategory     String?
+  description     String
+  latitude        Float?
+  longitude       Float?
+  address         String
+  landmark        String?
+  zoneId          String?
+  circleId        String?
+  wardId          String?
+  departmentId    String?
+  assignedToId    String?
+  priority        ComplaintPriority @default(MEDIUM)
+  status          ComplaintStatus   @default(CREATED)
+  escalatedAt     DateTime?
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+  createdById     String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  citizen    Citizen     @relation(fields: [citizenId], references: [id])
+  zone       Zone?       @relation(fields: [zoneId], references: [id])
+  circle     Circle?     @relation(fields: [circleId], references: [id])
+  ward       Ward?       @relation(fields: [wardId], references: [id])
+  department Department? @relation(fields: [departmentId], references: [id])
+  assignedTo User?       @relation("ComplaintAssignedTo", fields: [assignedToId], references: [id])
+  createdBy  User        @relation("ComplaintCreatedBy", fields: [createdById], references: [id])
+  events     ComplaintEvent[]
+  documents  Document[]
+
+  @@unique([tenantId, complaintNumber])
+  @@index([tenantId])
+  @@index([citizenId])
+  @@index([status])
+  @@index([priority])
+  @@index([assignedToId])
+  @@index([departmentId])
+  @@index([wardId])
+  @@index([createdAt])
+}
+
+model ComplaintEvent {
+  id           String   @id @default(cuid())
+  complaintId  String
+  action       String   // CREATED, ASSIGNED, STATUS_CHANGE, COMMENT, etc.
+  description  String
+  previousStatus ComplaintStatus?
+  newStatus    ComplaintStatus?
+  performedById String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  performedBy User      @relation(fields: [performedById], references: [id])
+
+  @@index([complaintId])
+  @@index([createdAt])
+}
+
+// ============================================
+// PROPERTY TAX
+// ============================================
+
+model Property {
+  id           String         @id @default(cuid())
+  tenantId     String
+  propertyId   String         // Unique property identifier
+  propertyNumber String?      // Display number
+  ownerId      String
+  ownerName    String
+  address      String
+  zoneId       String?
+  circleId     String?
+  wardId       String?
+  propertyType PropertyType
+  builtUpArea  Float?         // in sq ft
+  plotArea     Float?         // in sq ft
+  landArea     Float?         // in sq ft
+  floors       Int?           // number of floors
+  constructionYear Int?
+  annualRentalValue Float?
+  annualTax    Float
+  status       PropertyStatus @default(ACTIVE)
+  lastAssessmentDate DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  owner    Citizen       @relation(fields: [ownerId], references: [id])
+  zone     Zone?         @relation(fields: [zoneId], references: [id])
+  circle   Circle?       @relation(fields: [circleId], references: [id])
+  ward     Ward?         @relation(fields: [wardId], references: [id])
+  taxPayments PropertyTaxPayment[]
+  documents Document[]
+
+  @@unique([tenantId, propertyId])
+  @@index([tenantId])
+  @@index([ownerId])
+  @@index([wardId])
+  @@index([status])
+}
+
+model PropertyTaxPayment {
+  id            String        @id @default(cuid())
+  propertyId    String
+  financialYear String        // e.g., "2024-25"
+  amount        Float
+  penalty       Float         @default(0)
+  discount      Float         @default(0)
+  totalAmount   Float
+  paymentDate   DateTime?
+  paymentMethod String?
+  transactionId String?
+  status        PaymentStatus @default(PENDING)
+  receiptNumber String?
+  paidById      String?       // User who made payment
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, financialYear])
+  @@index([propertyId])
+  @@index([status])
+}
+
+// ============================================
+// TRADE LICENSE
+// ============================================
+
+model TradeLicense {
+  id                String        @id @default(cuid())
+  tenantId          String
+  applicationNumber String        // Auto-generated
+  applicantId       String
+  businessName      String
+  businessType      String
+  businessCategory  String?
+  address           String
+  wardId            String?
+  employeeCount     Int?
+  annualTurnover    Float?
+  licenseNumber     String?       // Assigned after approval
+  status            LicenseStatus @default(DRAFT)
+  applicationDate   DateTime?
+  approvalDate      DateTime?
+  issueDate         DateTime?
+  expiryDate        DateTime?
+  validUntil        DateTime?     // License validity
+  fee               Float?
+  paymentStatus     PaymentStatus?
+  paymentDate       DateTime?
+  contactPhone      String?
+  contactEmail      String?
+  inspectionDate    DateTime?
+  approvedById      String?
+  rejectedById      String?
+  cancellationReason String?
+  rejectionReason   String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicant Citizen   @relation(fields: [applicantId], references: [id])
+  ward      Ward?     @relation(fields: [wardId], references: [id])
+  documents Document[]
+  workflow  LicenseWorkflowStep[]
+
+  @@unique([tenantId, applicationNumber])
+  @@unique([tenantId, licenseNumber])
+  @@index([tenantId])
+  @@index([applicantId])
+  @@index([status])
+}
+
+model LicenseWorkflowStep {
+  id            String   @id @default(cuid())
+  licenseId     String
+  step          String   // DOCUMENT_REVIEW, INSPECTION, APPROVAL, etc.
+  status        String   // PENDING, APPROVED, REJECTED
+  assignedTo    String?
+  performedById String?  // User who performed the step
+  comments      String?
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  license TradeLicense @relation(fields: [licenseId], references: [id], onDelete: Cascade)
+
+  @@index([licenseId])
+}
+
+// ============================================
+// BUILDING PERMISSION
+// ============================================
+
+model BuildingApplication {
+  id                String                   @id @default(cuid())
+  tenantId          String
+  applicationNumber String
+  applicantId       String
+  plotAddress       String
+  plotArea          Float
+  proposedBuiltUpArea Float
+  numberOfFloors    Int
+  buildingType      String
+  status            BuildingApplicationStatus @default(DRAFT)
+  applicationDate   DateTime?
+  approvalDate      DateTime?
+  permitNumber      String?
+  permitIssueDate   DateTime?
+  permitExpiryDate  DateTime?
+  fee               Float?
+  paymentStatus     PaymentStatus?
+  rejectionReason   String?
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  applicant Citizen   @relation(fields: [applicantId], references: [id])
+  documents Document[]
+  workflow  BuildingWorkflowStep[]
+
+  @@unique([tenantId, applicationNumber])
+  @@unique([tenantId, permitNumber])
+  @@index([tenantId])
+  @@index([applicantId])
+  @@index([status])
+}
+
+model BuildingWorkflowStep {
+  id            String   @id @default(cuid())
+  applicationId String
+  step          String
+  status        String
+  assignedTo    String?
+  comments      String?
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  application BuildingApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+}
+
+// ============================================
+// ENGINEERING WORKS / PROJECTS
+// ============================================
+
+model Project {
+  id             String        @id @default(cuid())
+  tenantId       String
+  win            String        // Work Identification Number
+  name           String
+  description    String?
+  departmentId   String
+  zoneId         String?
+  circleId       String?
+  wardId         String?
+  contractorId   String?
+  estimatedCost  Float
+  approvedCost   Float?
+  actualCost     Float?
+  startDate      DateTime?
+  expectedEndDate DateTime?
+  actualEndDate  DateTime?
+  status         ProjectStatus @default(PROPOSED)
+  progress       Int           @default(0) // 0-100
+  createdById    String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department Department  @relation(fields: [departmentId], references: [id])
+  zone       Zone?       @relation(fields: [zoneId], references: [id])
+  circle     Circle?     @relation(fields: [circleId], references: [id])
+  ward       Ward?       @relation(fields: [wardId], references: [id])
+  contractor Contractor? @relation(fields: [contractorId], references: [id])
+  milestones ProjectMilestone[]
+  documents  Document[]
+
+  @@unique([tenantId, win])
+  @@index([tenantId])
+  @@index([departmentId])
+  @@index([contractorId])
+  @@index([status])
+}
+
+model ProjectMilestone {
+  id          String    @id @default(cuid())
+  projectId   String
+  name        String
+  description String?
+  targetDate  DateTime?
+  completedDate DateTime?
+  progress    Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+// ============================================
+// CONTRACTOR MANAGEMENT
+// ============================================
+
+model Contractor {
+  id              String           @id @default(cuid())
+  tenantId        String
+  name            String
+  registrationNumber String
+  email           String
+  phone           String
+  address         String
+  category        String           // A, B, C class
+  specialization  String[]
+  status          ContractorStatus @default(ACTIVE)
+  blacklistReason String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contracts Contract[]
+  projects  Project[]
+
+  @@unique([tenantId, registrationNumber])
+  @@index([tenantId])
+  @@index([status])
+}
+
+model Contract {
+  id            String         @id @default(cuid())
+  tenantId      String
+  contractNumber String
+  contractorId  String
+  title         String
+  description   String?
+  value         Float
+  startDate     DateTime
+  endDate       DateTime
+  status        ContractStatus @default(DRAFT)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contractor Contractor @relation(fields: [contractorId], references: [id])
+  payments   ContractPayment[]
+  documents  Document[]
+
+  @@unique([tenantId, contractNumber])
+  @@index([tenantId])
+  @@index([contractorId])
+}
+
+model ContractPayment {
+  id            String        @id @default(cuid())
+  contractId    String
+  amount        Float
+  description   String?
+  paymentDate   DateTime?
+  status        PaymentStatus @default(PENDING)
+  transactionId String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  contract Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId])
+}
+
+// ============================================
+// MUNICIPAL FINANCE
+// ============================================
+
+model Budget {
+  id            String   @id @default(cuid())
+  tenantId      String
+  financialYear String   // e.g., "2024-25"
+  departmentId  String
+  allocatedAmount Float
+  spentAmount   Float    @default(0)
+  description   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id])
+
+  @@unique([tenantId, financialYear, departmentId])
+  @@index([tenantId])
+  @@index([departmentId])
+}
+
+model Transaction {
+  id              String          @id @default(cuid())
+  tenantId        String
+  transactionNumber String
+  type            TransactionType
+  category        String
+  amount          Float
+  description     String?
+  referenceType   String?         // PROPERTY_TAX, LICENSE_FEE, CONTRACT_PAYMENT, etc.
+  referenceId     String?
+  transactionDate DateTime        @default(now())
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, transactionNumber])
+  @@index([tenantId])
+  @@index([type])
+  @@index([transactionDate])
+}
+
+// ============================================
+// DOCUMENT MANAGEMENT
+// ============================================
+
+model Document {
+  id           String   @id @default(cuid())
+  tenantId     String
+  fileName     String
+  originalName String
+  mimeType     String
+  size         Int      // in bytes
+  storageKey   String   // S3/R2 key
+  storageUrl   String?  // CDN URL
+  uploadedById String
+  
+  // Polymorphic relations
+  complaintId     String?
+  propertyId      String?
+  tradeLicenseId  String?
+  buildingApplicationId String?
+  projectId       String?
+  contractId      String?
+  
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  uploadedBy  User      @relation(fields: [uploadedById], references: [id])
+  complaint   Complaint? @relation(fields: [complaintId], references: [id], onDelete: SetNull)
+  property    Property?  @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  tradeLicense TradeLicense? @relation(fields: [tradeLicenseId], references: [id], onDelete: SetNull)
+  buildingApplication BuildingApplication? @relation(fields: [buildingApplicationId], references: [id], onDelete: SetNull)
+  project     Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  contract    Contract?  @relation(fields: [contractId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([uploadedById])
+  @@index([complaintId])
+  @@index([propertyId])
+  @@index([tradeLicenseId])
+  @@index([projectId])
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+
+model Notification {
+  id        String           @id @default(cuid())
+  tenantId  String
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+// ============================================
+// WEBHOOKS
+// ============================================
+
+model WebhookEndpoint {
+  id          String   @id @default(cuid())
+  tenantId    String
+  userId      String
+  url         String
+  secret      String   // For signing payloads
+  events      String[] // Array of event types to subscribe to
+  isActive    Boolean  @default(true)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([isActive])
+}
+
+model WebhookDelivery {
+  id            String                @id @default(cuid())
+  endpointId    String
+  event         String
+  payload       Json
+  status        WebhookDeliveryStatus @default(PENDING)
+  statusCode    Int?
+  response      String?
+  attempts      Int                   @default(0)
+  lastAttemptAt DateTime?
+  deliveredAt   DateTime?
+  createdAt     DateTime              @default(now())
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================
+// AUDIT LOGS
+// ============================================
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  tenantId     String
+  userId       String?
+  action       String   // CREATE, UPDATE, DELETE, LOGIN, LOGOUT, etc.
+  resourceType String   // USER, EMPLOYEE, COMPLAINT, etc.
+  resourceId   String?
+  oldValues    Json?
+  newValues    Json?
+  ipAddress    String?
+  userAgent    String?
+  requestId    String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([action])
+  @@index([resourceType])
+  @@index([resourceId])
+  @@index([createdAt])
+}
