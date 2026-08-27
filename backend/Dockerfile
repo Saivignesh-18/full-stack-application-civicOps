@@ -1,5 +1,7 @@
 # CivicOps Backend Dockerfile
 FROM node:20-alpine AS base
+# Prisma needs OpenSSL (and libc6-compat) to generate/run its query engine on Alpine
+RUN apk add --no-cache openssl libc6-compat
 
 # Install dependencies only when needed
 FROM base AS deps
